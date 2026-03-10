@@ -1910,50 +1910,6 @@
 								</div>
 								{/if}
 
-					<!-- Tools Section (Only for OpenAI connector in advanced mode or edit mode) -->
-					{#if (isAdvancedMode || formState === 'edit') && selectedConnector === 'openai'}
-					<div class="pt-4 border-t border-gray-200">
-						<h4 class="block text-sm font-medium text-gray-700 mb-2">
-							{$_('assistants.form.tools.label', { default: 'Tools (Function Calling)' })}
-						</h4>
-						<p class="text-xs text-gray-500 mb-3">
-							{$_('assistants.form.tools.description', { default: 'Enable tools that the assistant can use during conversations' })}
-						</p>
-
-						{#if loadingTools}
-							<p class="text-sm text-gray-500">{$_('assistants.form.tools.loading', { default: 'Loading tools...' })}</p>
-						{:else if toolsError}
-							<p class="text-sm text-red-600">{$_('assistants.form.tools.error', { default: 'Error loading tools:' })} {toolsError}</p>
-						{:else if availableTools.length === 0}
-							<p class="text-sm text-gray-500">{$_('assistants.form.tools.noneFound', { default: 'No tools available.' })}</p>
-						{:else}
-							<div class="space-y-2 max-h-48 overflow-y-auto border rounded p-2" role="group" aria-labelledby="tools-group-label">
-								<span id="tools-group-label" class="sr-only">{$_('assistants.form.tools.label', { default: 'Tools' })}</span>
-								{#each availableTools as tool (tool.name)}
-									<label class="flex items-start space-x-2 cursor-pointer p-1 hover:bg-gray-50 rounded">
-											<input
-											type="checkbox"
-											bind:group={selectedTools}
-											value={tool.name}
-											onchange={handleFieldChange}
-											class="mt-0.5 rounded border-gray-300 text-brand shadow-sm focus:border-brand focus:ring focus:ring-offset-0 focus:ring-brand focus:ring-opacity-50"
-										/>
-										<div class="flex-1 min-w-0">
-											<span class="text-sm font-medium text-gray-700 capitalize">{tool.name}</span>
-											<span class="ml-2 text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{tool.category}</span>
-											<p class="text-xs text-gray-500 mt-0.5">{tool.description}</p>
-										</div>
-									</label>
-								{/each}
-							</div>
-							{#if selectedTools.length > 0}
-								<p class="mt-2 text-xs text-gray-600">
-									{$_('assistants.form.tools.selected', { default: 'Selected:' })} {selectedTools.join(', ')}
-								</p>
-							{/if}
-									{/if}
-					</div>
-					{/if}
 
 					<!-- Tools Section (Only for OpenAI connector in advanced mode or edit mode) -->
 					{#if (isAdvancedMode || formState === 'edit') && selectedConnector === 'openai'}
