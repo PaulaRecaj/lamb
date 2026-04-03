@@ -1,5 +1,6 @@
 import json
 import asyncio
+import inspect
 from typing import Dict, Any, AsyncGenerator, Optional, List
 import time
 import logging
@@ -280,14 +281,14 @@ def get_tools_for_assistant(assistant) -> List[Dict]:
         return []
 
 
-async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
-    """
-    Execute a tool by name with the provided arguments.
-    
+async def execute_tool(tool_name: str, arguments: Dict[str, Any], request_body: Optional[Dict[str, Any]] = None) -> str:
+    """Execute a tool by name with the provided arguments.
+
     Args:
         tool_name: Name of the tool to execute (function name from spec)
         arguments: Dictionary of arguments to pass to the tool
-        
+        request_body: Optional original request body (useful for trusted headers)
+
     Returns:
         Tool result as a JSON string
     """
@@ -297,21 +298,31 @@ async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
         if tool_data["spec"]["function"]["name"] == tool_name:
             tool_func = tool_data["function"]
             break
-    
+
     if not tool_func:
         logger.error(f"Unknown tool: {tool_name}")
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
-    
+
+    # Inject request body into tool arguments when supported (trusted headers)
+    if request_body:
+        sig = inspect.signature(tool_func)
+        if "request" in sig.parameters and "request" not in arguments:
+            arguments["request"] = request_body
+        elif "body" in sig.parameters and "body" not in arguments:
+            arguments["body"] = request_body
+        elif "request_body" in sig.parameters and "request_body" not in arguments:
+            arguments["request_body"] = request_body
+
     try:
         # Check if the function is async
         if asyncio.iscoroutinefunction(tool_func):
             result = await tool_func(**arguments)
         else:
             result = tool_func(**arguments)
-            
+
         logger.info(f"Tool '{tool_name}' executed successfully")
         return result
-        
+
     except Exception as e:
         logger.error(f"Error executing tool '{tool_name}': {e}")
         return json.dumps({"error": str(e)})
@@ -869,7 +880,7 @@ Returns:
                     
                     logger.info(f"Executing tool: {tool_name}({arguments})")
                     
-                    result = await execute_tool(tool_name, arguments)
+                    result = await execute_tool(tool_name, arguments, request_body=body)
                     
                     # Add tool result to messages
                     working_messages.append({
@@ -979,7 +990,7 @@ Returns:
                         arguments = {}
                     
                     logger.info(f"Executing tool: {tc_data['name']}({arguments})")
-                    result = await execute_tool(tc_data["name"], arguments)
+                    result = await execute_tool(tc_data["name"], arguments, request_body=body)
                     
                     working_messages.append({
                         "role": "tool",

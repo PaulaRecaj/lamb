@@ -62,6 +62,67 @@ async def _moodle_ws_get(
 
     return data
 
+
+def _resolve_moodle_user_id_from_email(email: str) -> Optional[str]:
+    """Best-effort mapping from email to Moodle numeric user ID."""
+    moodle_url = os.getenv("MOODLE_API_URL")
+    moodle_token = os.getenv("MOODLE_TOKEN")
+
+    if not (moodle_url and moodle_token):
+        return None
+
+    ws_url = _moodle_ws_url(moodle_url)
+    params = {
+        "wstoken": moodle_token,
+        "wsfunction": "core_user_get_users_by_field",
+        "moodlewsrestformat": "json",
+        "field": "email",
+        "values[0]": email,
+    }
+
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(ws_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        if isinstance(data, list) and data and isinstance(data[0], dict) and "id" in data[0]:
+            return str(data[0]["id"])
+    except Exception as e:
+        logger.warning(f"Unable to resolve Moodle user ID for email '{email}': {e}")
+
+    return None
+
+
+def _extract_moodle_user_id_from_request(request: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Extract a trusted Moodle user ID from OpenWebUI headers in the request.
+
+    Priorities:
+    1. Resolve Moodle numeric ID from email (if provided)
+    2. Use x-openwebui-user-id only if it looks like a numeric Moodle user ID
+    """
+    if not request:
+        return None
+
+    openwebui_headers = request.get("__openwebui_headers__", {}) or {}
+
+    # Prefer email resolution (most reliable for Moodle numeric ID)
+    email = openwebui_headers.get("x-openwebui-user-email") or openwebui_headers.get("X-OpenWebUI-User-Email")
+    if email:
+        resolved = _resolve_moodle_user_id_from_email(str(email))
+        if resolved and resolved.isdigit():
+            return resolved
+
+    # Fallback to user-id header, but only accept if it looks numeric
+    user_id = openwebui_headers.get("x-openwebui-user-id") or openwebui_headers.get("X-OpenWebUI-User-Id")
+    if user_id:
+        user_id_str = str(user_id).strip()
+        if user_id_str.isdigit():
+            return user_id_str
+
+    return None
+
+
 # OpenAI Function Calling specification for the Moodle tool
 MOODLE_TOOL_SPEC = {
     "type": "function",
@@ -76,7 +137,7 @@ MOODLE_TOOL_SPEC = {
                     "description": "The Moodle user identifier (username or ID)"
                 }
             },
-            "required": ["user_id"]
+            "required": []
         }
     }
 }
@@ -110,37 +171,59 @@ MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC = {
                     "minimum": 1,
                 },
             },
-            "required": ["user_id"],
+            "required": [],
         },
     },
 }
 
-async def get_moodle_courses(user_id: str) -> str:
-    """
-    Get courses for a Moodle user.
+async def get_moodle_courses(user_id: Optional[str] = None, request: Optional[Dict[str, Any]] = None) -> str:
+    """Get courses for a Moodle user.
 
     Requires `MOODLE_API_URL` and `MOODLE_TOKEN` to be configured.
+
     Args:
-        user_id: The Moodle user identifier (username or ID)
-        
+        user_id: The Moodle user identifier (username or ID). If not provided,
+            this function will attempt to resolve it from trusted request headers.
+        request: Optional request dict containing OpenWebUI headers (trusted source).
+
     Returns:
         JSON string with course information or error message
     """
     moodle_url = os.getenv("MOODLE_API_URL")
     moodle_token = os.getenv("MOODLE_TOKEN")
 
+    # Prefer trusted user ID from request headers over caller-provided value
+    if request:
+        header_user_id = _extract_moodle_user_id_from_request(request)
+        if header_user_id:
+            user_id = header_user_id
+
     if not moodle_url or not moodle_token:
+        resolved_user = _extract_moodle_user_id_from_request(request) if request else user_id
         logger.error("MOODLE_API_URL and/or MOODLE_TOKEN environment variable not set")
         return json.dumps(
             {
-                "user_id": user_id,
+                "user_id": resolved_user,
                 "courses": [],
                 "error": "MOODLE_API_URL and/or MOODLE_TOKEN not configured",
                 "success": False,
             }
         )
 
-    return await get_moodle_courses_real(user_id=str(user_id).strip(), moodle_url=moodle_url, token=moodle_token)
+    resolved_user_id = str(user_id).strip() if user_id else ""
+    logger.debug(f"get_moodle_courses: resolved_user_id={resolved_user_id} (original user_id={user_id})")
+
+    if not resolved_user_id:
+        return json.dumps(
+            {
+                "user_id": user_id,
+                "courses": [],
+                "error": "No Moodle user ID provided or available from request headers",
+                "success": False,
+            }
+        )
+
+    return await get_moodle_courses_real(user_id=resolved_user_id, moodle_url=moodle_url, token=moodle_token)
 
 
 async def get_moodle_courses_real(user_id: str, moodle_url: str, token: str) -> str:
@@ -203,10 +286,11 @@ def get_moodle_courses_sync(user_id: str) -> str:
 
 
 async def get_moodle_assignments_status(
-    user_id: str,
+    user_id: Optional[str] = None,
     days_past: int = 30,
     days_future: int = 30,
     limit: int = 40,
+    request: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Return assignment completion/due/missed status for a user.
 
@@ -219,12 +303,31 @@ async def get_moodle_assignments_status(
     moodle_url = os.getenv("MOODLE_API_URL")
     moodle_token = os.getenv("MOODLE_TOKEN")
 
+    # Prefer trusted user ID from request headers over caller-provided value
+    if request:
+        header_user_id = _extract_moodle_user_id_from_request(request)
+        if header_user_id:
+            user_id = header_user_id
+
     if not moodle_url or not moodle_token:
+        resolved_user = _extract_moodle_user_id_from_request(request) if request else user_id
         logger.error("MOODLE_API_URL and/or MOODLE_TOKEN environment variable not set")
         return json.dumps(
             {
                 "user_id": user_id,
+                "resolved_user_id": resolved_user,
                 "error": "MOODLE_API_URL and/or MOODLE_TOKEN not configured",
+                "success": False,
+            }
+        )
+
+    resolved_user_id = str(user_id).strip() if user_id else ""
+    if not resolved_user_id:
+        return json.dumps(
+            {
+                "user_id": user_id,
+                "resolved_user_id": resolved_user_id,
+                "error": "No Moodle user ID provided or available from request headers",
                 "success": False,
             }
         )

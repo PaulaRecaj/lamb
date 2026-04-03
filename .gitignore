@@ -163,3 +163,13 @@ testing/package-lock.json
 testing/playwright/test-results/.last-run.json
 lamb-kb-server-stable/backend/data/lamb-kb-server.db-shm
 lamb-kb-server-stable/backend/data/lamb-kb-server.db-wal
+
+# Language files (generated / temporary)
+ca.md
+ca.timestamp
+en.md
+en.timestamp
+eu.md
+eu.timestamp
+es.md
+es.timestamp
