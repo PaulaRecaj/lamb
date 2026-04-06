@@ -115,7 +115,7 @@
     }
 </script>
 
-<div class="max-w-5xl mx-auto px-4 py-6">
+<div class="max-w-7xl mx-auto px-4 py-6">
     <div class="flex items-center justify-between mb-6">
         <h1 class="text-3xl font-bold text-brand">
             🤖 {$_('home.dashboard.agent.title', { default: 'LAMB Agent' })}
