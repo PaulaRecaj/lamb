@@ -241,11 +241,11 @@
 	}
 </script>
 
-<div class="flex h-full gap-0 {canvasData ? '' : ''}">
+<div class="flex flex-col lg:flex-row h-full gap-0">
 <!-- Terminal panel -->
 <div
-	class="flex flex-col h-full font-mono text-sm rounded-lg border overflow-hidden transition-all duration-200
-	       {canvasData ? 'w-[60%]' : 'w-full'}"
+	class="flex flex-col font-mono text-sm rounded-lg border overflow-hidden transition-all duration-200
+	       {canvasData ? 'lg:w-[55%] h-[60%] lg:h-full' : 'w-full h-full'}"
 	class:bg-gray-900={darkMode}
 	class:text-green-400={darkMode}
 	class:border-gray-700={darkMode}
@@ -371,7 +371,7 @@
 </div>
 <!-- Canvas panel (side panel for structured content) -->
 {#if canvasData}
-	<div class="w-[40%] h-full flex flex-col border rounded-lg overflow-hidden ml-2
+	<div class="lg:w-[45%] w-full h-[40%] lg:h-full flex flex-col border rounded-lg overflow-hidden lg:ml-2 mt-2 lg:mt-0
 	            {darkMode ? 'bg-gray-800 border-gray-700 text-gray-200' : 'bg-white border-gray-300 text-gray-800'}">
 		<div class="flex items-center justify-between px-4 py-2 border-b
 		            {darkMode ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-gray-50'}">
