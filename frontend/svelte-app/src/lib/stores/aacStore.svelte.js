@@ -5,7 +5,7 @@
  * and persists tab state to sessionStorage for page navigation.
  */
 
-/** @typedef {{ id: string, title: string, assistantId: number|null, skill: string|null }} TabInfo */
+/** @typedef {{ id: string, title: string, assistantId: number|null, skill: string|null, lastMessageAt: number }} TabInfo */
 
 /** @type {TabInfo[]} */
 let openTabs = $state([]);
@@ -52,7 +52,7 @@ export function openTab(id, title, assistantId = null, skill = null) {
 		persist();
 		return;
 	}
-	openTabs = [...openTabs, { id, title, assistantId, skill }];
+	openTabs = [...openTabs, { id, title, assistantId, skill, lastMessageAt: Date.now() }];
 	activeTabId = id;
 	showTabs = true;
 	persist();
@@ -110,4 +110,19 @@ export function getActiveTabId() {
 /** @returns {boolean} */
 export function isTabsVisible() {
 	return showTabs;
+}
+
+/**
+ * Record that a message was sent in a tab. Returns true if user was away >5 min.
+ * @param {string} id
+ * @returns {boolean}
+ */
+export function recordTabActivity(id) {
+	const AWAY_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+	const tab = openTabs.find(t => t.id === id);
+	if (!tab) return false;
+	const wasAway = (Date.now() - (tab.lastMessageAt || 0)) > AWAY_THRESHOLD_MS;
+	tab.lastMessageAt = Date.now();
+	persist();
+	return wasAway;
 }
