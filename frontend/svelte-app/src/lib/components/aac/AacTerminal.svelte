@@ -1,6 +1,7 @@
 <script>
 	import { onMount, tick } from 'svelte';
 	import { sendMessageStream, getSession, sendMessage } from '$lib/services/aacService';
+	import { recordTabActivity } from '$lib/stores/aacStore.svelte';
 	import { marked } from 'marked';
 
 	/** @type {{ sessionId: string, firstMessage?: string, resumed?: boolean, skillStartup?: boolean }} */
@@ -146,10 +147,11 @@
 		const text = inputText.trim();
 		if (!text || loading) return;
 
-		// If resuming, prepend context note
+		// Check if user was away >5 min — prepend context note
+		const wasAway = recordTabActivity(sessionId);
 		let messageToSend = text;
-		if (resumeNotice) {
-			messageToSend = `[System: User returned to session. Resources may have changed.]\n${text}`;
+		if (wasAway || resumeNotice) {
+			messageToSend = `[System: User returned after being away. Things may have changed — don't assume earlier data is still current.]\n${text}`;
 			resumeNotice = false;
 		}
 

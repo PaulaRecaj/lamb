@@ -538,6 +538,7 @@ Every test run + evaluation produces structured data for the research lines in `
 | **Partial** | 19 | AAC bugs: 19a ✅ prompt templates, 19c ✅ skill switching, 19b merged into 21 | |
 | **In Progress** | 21 | Unified AAC session management (+ merged 9c, 19b): A→B→C→D phases | |
 | ~~Done~~ | 22 | Liteshell update merge + metadata defaults on create AND update | ✅ 2026-04-06 |
+| **Next** | 24 | Terminal toggle: show/hide tool call details inline | |
 | **Next** | 23 | Creator Interface endpoint hardening — server-side validation audit #335 | |
 | **Next** | 20 | Missing liteshell commands — publish, KB query, templates, analytics, chat context | |
 | **Then** | 18 | AAC terminal file upload widget — attach files to agent conversations | |
