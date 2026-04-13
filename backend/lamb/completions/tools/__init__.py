@@ -14,6 +14,7 @@ from .moodle import (
     MOODLE_TOOL_SPEC,
     MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC,
 )
+from .activities import get_moodle_activities_completion_status, MOODLE_ACTIVITIES_COMPLETION_STATUS_TOOL_SPEC
 
 # Tool Registry - maps tool names to their specs and functions
 TOOL_REGISTRY = {
@@ -23,7 +24,7 @@ TOOL_REGISTRY = {
         "description": "Get current temperature for a city",
         "category": "utilities"
     },
-    "moodle": {
+    "moodle_courses": {
         "spec": MOODLE_TOOL_SPEC,
         "function": get_moodle_courses,
         "description": "Get user's enrolled courses from Moodle LMS",
@@ -33,6 +34,12 @@ TOOL_REGISTRY = {
         "spec": MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC,
         "function": get_moodle_assignments_status,
         "description": "Get Moodle assignment status for a user (completed, due, missed)",
+        "category": "lms",
+    },
+    "moodle_activities_completion": {
+        "spec": MOODLE_ACTIVITIES_COMPLETION_STATUS_TOOL_SPEC,
+        "function": get_moodle_activities_completion_status,
+        "description": "Get completion status for all activities in all courses for the authenticated user (privacy: user_id always from headers)",
         "category": "lms",
     },
 }
