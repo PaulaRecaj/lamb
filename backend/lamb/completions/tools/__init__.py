@@ -31,17 +31,11 @@ TOOL_REGISTRY = {
         "category": "lms"
     },
     "moodle_assignments": {
-        "spec": MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC,
-        "function": get_moodle_assignments_status,
-        "description": "Get Moodle assignment status for a user (completed, due, missed)",
-        "category": "lms",
-    },
-    "moodle_activities_completion": {
         "spec": MOODLE_ACTIVITIES_COMPLETION_STATUS_TOOL_SPEC,
         "function": get_moodle_activities_completion_status,
-        "description": "Get completion status for all activities in all courses for the authenticated user (privacy: user_id always from headers)",
+        "description": "Get Moodle assignment status for a user",
         "category": "lms",
-    },
+    }
 }
 
 
