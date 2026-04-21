@@ -15,6 +15,7 @@ from .moodle import (
     MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC,
 )
 from .activities import get_moodle_activities_completion_status, MOODLE_ACTIVITIES_COMPLETION_STATUS_TOOL_SPEC
+from .report import get_moodle_report_data, MOODLE_REPORT_TOOL_SPEC
 
 # Tool Registry - maps tool names to their specs and functions
 TOOL_REGISTRY = {
@@ -34,6 +35,12 @@ TOOL_REGISTRY = {
         "spec": MOODLE_ACTIVITIES_COMPLETION_STATUS_TOOL_SPEC,
         "function": get_moodle_activities_completion_status,
         "description": "Get Moodle assignment status for a user",
+        "category": "lms",
+    },
+    "moodle_reports": {
+        "spec": MOODLE_REPORT_TOOL_SPEC,
+        "function": get_moodle_report_data,
+        "description": "Generate Moodle teacher reports for pending assignments, inactive users, and completion overview",
         "category": "lms",
     }
 }
@@ -99,6 +106,8 @@ __all__ = [
     'MOODLE_TOOL_SPEC',
     'get_moodle_assignments_status',
     'MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC',
+    'get_moodle_report_data',
+    'MOODLE_REPORT_TOOL_SPEC',
     'TOOL_REGISTRY',
     'get_tool_specs',
     'get_tool_function',
