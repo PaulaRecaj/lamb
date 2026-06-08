@@ -5,6 +5,7 @@ Tests cover:
 - Utility functions (_moodle_ws_url, _now_ts, _ts_to_iso, _moodle_ws_get, etc.)
 - Tool specifications (MOODLE_TOOL_SPEC, MOODLE_ASSIGNMENTS_STATUS_TOOL_SPEC)
 - Tool implementations (get_moodle_courses, get_moodle_assignments_status)
+- Report tool (MOODLE_REPORT_TOOL_SPEC, get_moodle_report_data)
 
 Run with: pytest backend/tests/test_tools_moodle.py -v
 """
@@ -26,6 +27,12 @@ from lamb.completions.tools.moodle import (
     _ts_to_iso,
     get_moodle_courses,
     get_moodle_assignments_status,
+)
+from lamb.completions.tools.report import (
+    MOODLE_REPORT_TOOL_SPEC,
+    _paginate,
+    _select_columns,
+    get_moodle_report_data,
 )
 
 # ===========================================================================
@@ -605,3 +612,368 @@ class TestGetMoodleAssignmentsStatus:
         data = json.loads(result)
 
         assert data["resolved_user_id"] == "88"
+
+
+# ===========================================================================
+# Section 4: Report Tool Utilities
+# ===========================================================================
+
+
+class TestPaginate:
+    """_paginate: slice a list into pages."""
+
+    def test_first_page(self):
+        items = [{"id": i} for i in range(100)]
+        result = _paginate(items, page=1, page_size=10)
+        assert len(result) == 10
+        assert result[0]["id"] == 0
+
+    def test_second_page(self):
+        items = [{"id": i} for i in range(100)]
+        result = _paginate(items, page=2, page_size=10)
+        assert len(result) == 10
+        assert result[0]["id"] == 10
+
+    def test_page_zero_defaults_to_one(self):
+        items = [{"id": i} for i in range(10)]
+        result = _paginate(items, page=0, page_size=5)
+        assert len(result) == 5
+        assert result[0]["id"] == 0
+
+    def test_negative_page_size_defaults_to_20(self):
+        items = [{"id": i} for i in range(100)]
+        result = _paginate(items, page=1, page_size=-1)
+        assert len(result) == 20
+
+    def test_returns_empty_for_page_beyond_range(self):
+        items = [{"id": i} for i in range(5)]
+        result = _paginate(items, page=10, page_size=10)
+        assert result == []
+
+
+class TestSelectColumns:
+    """_select_columns: filter dict keys to allowed column set."""
+
+    def test_filters_to_specified_columns(self):
+        item = {"a": 1, "b": 2, "c": 3}
+        result = _select_columns(item, columns=["a", "c"])
+        assert result == {"a": 1, "c": 3}
+
+    def test_returns_all_when_no_columns(self):
+        item = {"a": 1, "b": 2}
+        result = _select_columns(item, columns=None)
+        assert result == {"a": 1, "b": 2}
+
+    def test_returns_empty_when_no_columns_match(self):
+        item = {"a": 1, "b": 2}
+        result = _select_columns(item, columns=["x", "y"])
+        assert result == {}
+
+
+# ===========================================================================
+# Section 5: Report Tool Spec
+# ===========================================================================
+
+
+class TestMoodleReportToolSpec:
+    """MOODLE_REPORT_TOOL_SPEC is a valid OpenAI function-calling spec."""
+
+    def test_is_dict_with_type_function(self):
+        assert MOODLE_REPORT_TOOL_SPEC["type"] == "function"
+        assert "function" in MOODLE_REPORT_TOOL_SPEC
+
+    def test_has_name_and_description(self):
+        fn = MOODLE_REPORT_TOOL_SPEC["function"]
+        assert fn["name"] == "get_moodle_report_data"
+        assert len(fn["description"]) > 0
+
+    def test_has_report_type_enum(self):
+        props = MOODLE_REPORT_TOOL_SPEC["function"]["parameters"]["properties"]
+        assert "report_type" in props
+        assert "enum" in props["report_type"]
+        assert "summary" in props["report_type"]["enum"]
+        assert "inactive_users" in props["report_type"]["enum"]
+
+    def test_has_days_inactive_parameter(self):
+        props = MOODLE_REPORT_TOOL_SPEC["function"]["parameters"]["properties"]
+        assert "days_inactive" in props
+        assert props["days_inactive"]["default"] == 14
+
+
+# ===========================================================================
+# Section 6: Report Tool Implementation
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestGetMoodleReportData:
+    """get_moodle_report_data: teacher reports for Moodle courses."""
+
+    MOCK_COURSES = [
+        {"id": 10, "fullname": "Mathematics"},
+    ]
+
+    MOCK_ENROLLED_USERS = [
+        {"id": 1, "fullname": "Student A", "email": "a@test.com", "lastaccess": 1_750_000_000,
+         "roles": [{"shortname": "student"}]},
+        {"id": 2, "fullname": "Teacher T", "email": "t@test.com", "lastaccess": 1_750_000_000,
+         "roles": [{"shortname": "editingteacher"}]},
+    ]
+
+    MOCK_ASSIGNMENTS = {
+        "courses": [
+            {
+                "id": 10,
+                "assignments": [
+                    {
+                        "id": 1001,
+                        "name": "Homework 1",
+                        "duedate": 1_800_000_000,  # far future
+                        "intro": "First assignment",
+                    },
+                ],
+            },
+        ]
+    }
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_success_summary_report(self, mock_ws_get, mock_extract, mock_getenv):
+        """Summary report returns pending assignments, inactive users, and completion overview."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "2"
+
+        # Call sequence:
+        # 1. core_enrol_get_users_courses → courses
+        # 2. core_enrol_get_enrolled_users (for _user_is_teacher_in_course) → enrolled with roles
+        # 3. core_enrol_get_enrolled_users (for report data) → enrolled users
+        # 4. mod_assign_get_assignments → assignments
+        # 5. mod_assign_get_submission_status → submission status
+        mock_ws_get.side_effect = [
+            self.MOCK_COURSES,          # 1: courses
+            self.MOCK_ENROLLED_USERS,   # 2: teacher check → finds editingteacher
+            self.MOCK_ENROLLED_USERS,   # 3: enrolled users for report
+            self.MOCK_ASSIGNMENTS,      # 4: assignments
+            {"submissionstatus": "submitted", "graded": True},  # 5: submission status
+        ]
+
+        request = {"__openwebui_headers__": {"x-openwebui-user-id": "2"}}
+        result = await get_moodle_report_data(
+            request=request,
+            report_type="summary",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["user_id"] == "2"
+        assert data["report_type"] == "summary"
+        assert len(data["reports"]) == 1
+        report = data["reports"][0]
+        assert report["course_id"] == 10
+        assert report["course_name"] == "Mathematics"
+
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    async def test_missing_user_id(self, mock_extract):
+        """No user_id in request headers returns error."""
+        mock_extract.return_value = None
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "No Moodle user ID" in data["error"]
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    async def test_missing_config(self, mock_extract, mock_getenv):
+        """Missing env vars returns error JSON."""
+        mock_extract.return_value = "42"
+        mock_getenv.return_value = None
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "not configured" in data["error"]
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_skips_course_if_not_teacher(self, mock_ws_get, mock_extract, mock_getenv):
+        """Courses where user is not a teacher are skipped."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "1"
+
+        # User is student (no teacher role)
+        enrolled = [
+            {"id": 1, "fullname": "Student A", "email": "a@test.com", "lastaccess": 1_750_000_000,
+             "roles": [{"shortname": "student"}]},
+        ]
+        mock_ws_get.return_value = enrolled
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert len(data["reports"]) == 0  # all courses skipped
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_inactive_users_report(self, mock_ws_get, mock_extract, mock_getenv):
+        """Report with inactive_users type returns only inactive user data."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "2"
+
+        # Teacher check + enrolled for report + assignments (not used for inactive)
+        mock_ws_get.side_effect = [
+            self.MOCK_COURSES,
+            self.MOCK_ENROLLED_USERS,   # teacher check
+            self.MOCK_ENROLLED_USERS,   # enrolled for report
+            self.MOCK_ASSIGNMENTS,      # assignments (not used)
+        ]
+
+        result = await get_moodle_report_data(
+            report_type="inactive_users",
+            days_inactive=1,
+        )
+        data = json.loads(result)
+
+        assert data["success"] is True
+        report = data["reports"][0]
+        # inactive_users should be populated
+        assert "inactive_users" in report
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_completion_status_report(self, mock_ws_get, mock_extract, mock_getenv):
+        """Report with completion_status returns completion overview."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "2"
+
+        enrolled = [
+            {"id": 1, "fullname": "Student A", "email": "a@test.com", "lastaccess": 1_750_000_000,
+             "roles": [{"shortname": "student"}]},
+            {"id": 2, "fullname": "Teacher T", "email": "t@test.com", "lastaccess": 1_750_000_000,
+             "roles": [{"shortname": "editingteacher"}]},
+        ]
+
+        mock_ws_get.side_effect = [
+            self.MOCK_COURSES,          # courses
+            enrolled,                   # teacher check
+            enrolled,                   # enrolled for report
+            self.MOCK_ASSIGNMENTS,      # assignments
+            {"submissionstatus": "submitted", "graded": True},
+        ]
+
+        result = await get_moodle_report_data(
+            report_type="completion_status",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is True
+        report = data["reports"][0]
+        assert "completion_overview" in report
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_course_filter(self, mock_ws_get, mock_extract, mock_getenv):
+        """course_ids filter excludes non-matching courses."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "2"
+
+        courses = [
+            {"id": 10, "fullname": "Mathematics"},
+            {"id": 20, "fullname": "Physics"},
+        ]
+        # First call returns both courses, only Math matches filter
+        mock_ws_get.side_effect = [
+            courses,                          # courses
+            self.MOCK_ENROLLED_USERS,         # teacher check for Math (id=10)
+            self.MOCK_ENROLLED_USERS,         # enrolled for report
+            self.MOCK_ASSIGNMENTS,            # assignments
+            {"submissionstatus": "submitted", "graded": True},
+        ]
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+            course_ids=[10],
+        )
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert len(data["reports"]) == 1
+        assert data["reports"][0]["course_id"] == 10
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_handles_generic_exception(self, mock_ws_get, mock_extract, mock_getenv):
+        """Unexpected exception returns error JSON."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "42"
+        mock_ws_get.side_effect = RuntimeError("Unexpected error")
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+        )
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "Unexpected error" in data["error"]
+
+    @patch("lamb.completions.tools.report.os.getenv")
+    @patch("lamb.completions.tools.report._extract_moodle_user_id_from_request")
+    @patch("lamb.completions.tools.report._moodle_ws_get")
+    async def test_pagination_applied(self, mock_ws_get, mock_extract, mock_getenv):
+        """Page and page_size parameters are forwarded in the response."""
+        mock_getenv.side_effect = lambda k, d=None: {
+            "MOODLE_API_URL": "https://moodle.test",
+            "MOODLE_TOKEN": "tok",
+        }.get(k, d)
+        mock_extract.return_value = "2"
+
+        mock_ws_get.side_effect = [
+            self.MOCK_COURSES,
+            self.MOCK_ENROLLED_USERS,
+            self.MOCK_ENROLLED_USERS,
+            self.MOCK_ASSIGNMENTS,
+            {"submissionstatus": "submitted", "graded": True},
+        ]
+
+        result = await get_moodle_report_data(
+            report_type="summary",
+            page=3,
+            page_size=5,
+        )
+        data = json.loads(result)
+
+        assert data["page"] == 3
+        assert data["page_size"] == 5
